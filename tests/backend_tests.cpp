@@ -115,7 +115,9 @@ class ShortcutBackend : public QObject {
 
 public:
     explicit ShortcutBackend(QUrl source, double duration, QObject *parent = nullptr)
-        : QObject(parent), m_source(std::move(source)), m_duration(duration) {}
+        : QObject(parent), m_source(std::move(source)), m_duration(duration) {
+        m_currentIndex = m_source.isEmpty() ? -1 : 0;
+    }
 
     QUrl source() const { return m_source; }
     double duration() const { return m_duration; }
@@ -127,10 +129,13 @@ public:
     QString themeAccent() const { return QStringLiteral("#FFD60A"); }
     QString themeAccentForeground() const { return QStringLiteral("black"); }
     ClipListModel *clips() const { return nullptr; }
-    int clipCount() const { return m_source.isEmpty() ? 0 : 1; }
+    int clipCount() const {
+        return clipCountOverride >= 0 ? clipCountOverride
+                                      : (m_source.isEmpty() ? 0 : 1);
+    }
     int clipRevision() const { return m_clipRevision; }
     bool anyClipTrimmed() const { return m_anyTrimmed; }
-    int currentIndex() const { return m_source.isEmpty() ? -1 : 0; }
+    int currentIndex() const { return m_currentIndex; }
     double clipStartSec() const { return 0.0; }
     double clipEndSec() const { return m_duration; }
     bool clipHasAudio() const { return false; }
@@ -168,9 +173,19 @@ public:
             emit clipsChanged();
         }
     }
-    Q_INVOKABLE void selectClip(int) {}
-    Q_INVOKABLE void removeClip(int) {}
-    Q_INVOKABLE void moveClip(int, int) {}
+    Q_INVOKABLE void selectClip(int index) {
+        ++selectCount;
+        m_currentIndex = index;
+        emit currentIndexChanged();
+    }
+    Q_INVOKABLE void removeClip(int) { ++removeCount; }
+    Q_INVOKABLE void moveClip(int from, int to) {
+        ++moveCount;
+        if (m_currentIndex == from) {
+            m_currentIndex = to;
+            emit currentIndexChanged();
+        }
+    }
     Q_INVOKABLE void duplicateClip(int) { ++duplicateCount; }
     Q_INVOKABLE void splitClip(int, double) { ++splitCount; }
     Q_INVOKABLE void exportMergeDialog() { ++mergeExportCount; }
@@ -178,13 +193,16 @@ public:
     Q_INVOKABLE void confirmBatchExport() {}
     Q_INVOKABLE void cancelBatchExport() {}
     Q_INVOKABLE void attachAudioDialog(int) { ++attachCount; }
-    Q_INVOKABLE void detachAudio(int) {}
+    Q_INVOKABLE void detachAudio(int) { ++detachCount; }
     Q_INVOKABLE void setClipAudioTrim(int, double, double) {}
     Q_INVOKABLE void addAudioDialog() { ++addAudioCount; }
     Q_INVOKABLE void removeAudio(int) {}
     Q_INVOKABLE void setAudioTrim(int, double, double) {}
     Q_INVOKABLE void setAudioPosition(int, double) {}
-    Q_INVOKABLE void setMuteVideoAudio(bool) {}
+    Q_INVOKABLE void setMuteVideoAudio(bool mute) {
+        ++muteCount;
+        lastMute = mute;
+    }
 
     void announceInfo() { emit infoChanged(); }
     void announceExportDone() { emit exportDone(QStringLiteral("/tmp/exported.mp4")); }
@@ -195,8 +213,15 @@ public:
     int batchExportCount = 0;
     int duplicateCount = 0;
     int splitCount = 0;
+    int selectCount = 0;
+    int moveCount = 0;
+    int removeCount = 0;
     int attachCount = 0;
+    int detachCount = 0;
     int addAudioCount = 0;
+    int muteCount = 0;
+    int clipCountOverride = -1;
+    bool lastMute = false;
     double lastStart = 0;
     double lastEnd = 0;
     int thumbRequestCount = 0;
@@ -222,6 +247,7 @@ signals:
 private:
     QUrl m_source;
     double m_duration;
+    int m_currentIndex = -1;
     int m_clipRevision = 0;
     bool m_anyTrimmed = false;
     double m_lastStart = 0.0;
@@ -316,6 +342,7 @@ private slots:
     void qmlDoesNotCreateAudioOutputWithoutVideo();
     void qmlTimelineShowsEveryClip();
     void qmlCutShortcutSplitsAtPlayhead();
+    void qmlClipNavigationShortcuts();
     void qmlShortcutsTriggerBackendActions();
     void qmlArrowKeysMoveThePlayhead();
     void qmlSpaceChordsSetTheTrimEdges();
@@ -1372,6 +1399,37 @@ void BackendTests::qmlCutShortcutSplitsAtPlayhead() {
     QTRY_COMPARE_WITH_TIMEOUT(backend.splitCount, 1, 3000);
 }
 
+void BackendTests::qmlClipNavigationShortcuts() {
+    ShortcutBackend backend(QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("shortcut-placeholder.mp4"))),
+                            20.0);
+    backend.clipCountOverride = 2;
+    QmlHarness harness(backend);
+
+    QVERIFY2(harness.window(), qPrintable(mainQmlPath()));
+    QQuickWindow *window = harness.window();
+    QTRY_VERIFY_WITH_TIMEOUT(window->property("audioOutputReady").toBool(), 3000);
+
+    window->show();
+    window->requestActivate();
+    QTest::qWait(100);
+
+    QTest::keyClick(window, Qt::Key_Right, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.selectCount, 1, 3000);
+    QCOMPARE(backend.currentIndex(), 1);
+
+    QTest::keyClick(window, Qt::Key_Left, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.selectCount, 2, 3000);
+    QCOMPARE(backend.currentIndex(), 0);
+
+    QTest::keyClick(window, Qt::Key_Right, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.moveCount, 1, 3000);
+    QCOMPARE(backend.currentIndex(), 1);
+
+    QTest::keyClick(window, Qt::Key_Left, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.moveCount, 2, 3000);
+    QCOMPARE(backend.currentIndex(), 0);
+}
+
 void BackendTests::qmlShortcutsTriggerBackendActions() {
     ShortcutBackend backend(QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("shortcut-placeholder.mp4"))),
                             1.0);
@@ -1396,6 +1454,19 @@ void BackendTests::qmlShortcutsTriggerBackendActions() {
 
     QTest::keyClick(window, Qt::Key_D, Qt::ControlModifier);
     QTRY_COMPARE_WITH_TIMEOUT(backend.duplicateCount, 1, 3000);
+
+    QTest::keyClick(window, Qt::Key_Delete);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.removeCount, 1, 3000);
+
+    QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.attachCount, 1, 3000);
+
+    QTest::keyClick(window, Qt::Key_T, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.addAudioCount, 1, 3000);
+
+    QTest::keyClick(window, Qt::Key_M, Qt::ControlModifier | Qt::ShiftModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.muteCount, 1, 3000);
+    QVERIFY(backend.lastMute);
 
     // ? toggles the hotkey overlay, and Escape closes it again.
     QTest::keyClick(window, Qt::Key_Question);

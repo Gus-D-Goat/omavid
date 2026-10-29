@@ -79,12 +79,18 @@ Replacement audio is applied on export; preview playback always plays the clip's
 | `Ctrl+Space` | Move the trim start to the playhead |
 | `Alt+Space` | Move the trim end to the playhead |
 | `Z` | Zoom into the selection for fine tuning (again to zoom out) |
+| `Ctrl+←` / `Ctrl+→` | Select the previous / next clip |
+| `Ctrl+Shift+←` / `Ctrl+Shift+→` | Move the selected clip left / right |
 | `Ctrl+O` | Open videos |
 | `Ctrl+S` | Export the current clip |
-| `Ctrl+M` | Merge and export the playlist |
+| `Ctrl+M` | Merge and export the timeline |
 | `Ctrl+B` | Batch export every clip |
 | `Ctrl+D` | Duplicate the selected clip |
 | `Ctrl+K` | Cut the selected clip at the playhead |
+| `Delete` | Remove the selected clip |
+| `Ctrl+Shift+A` | Attach / remove audio for the selected clip |
+| `Ctrl+Shift+T` | Add an audio file to the merge track |
+| `Ctrl+Shift+M` | Toggle mute video audio |
 | `Q` | Quit (asks first if a trim hasn't been exported) |
 | `?` | Show these shortcuts in the app |
 

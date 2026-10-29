@@ -94,6 +94,34 @@ ApplicationWindow {
             return;
         backend.splitClip(backend.currentIndex, trimBar.playheadSec);
     }
+    function selectPreviousClip() {
+        if (backend.currentIndex > 0 && !backend.busy)
+            backend.selectClip(backend.currentIndex - 1);
+    }
+    function selectNextClip() {
+        if (backend.currentIndex >= 0 && backend.currentIndex < backend.clipCount - 1
+                && !backend.busy)
+            backend.selectClip(backend.currentIndex + 1);
+    }
+    function moveSelectedClip(delta) {
+        if (backend.currentIndex < 0 || backend.busy)
+            return;
+        var to = backend.currentIndex + delta;
+        if (to >= 0 && to < backend.clipCount)
+            backend.moveClip(backend.currentIndex, to);
+    }
+    function removeSelectedClip() {
+        if (backend.currentIndex >= 0 && !backend.busy)
+            backend.removeClip(backend.currentIndex);
+    }
+    function toggleClipAudio() {
+        if (backend.currentIndex < 0 || backend.busy)
+            return;
+        if (backend.clipHasAudio)
+            backend.detachAudio(backend.currentIndex);
+        else
+            backend.attachAudioDialog(backend.currentIndex);
+    }
     function ensureAudioOutput() {
         if (audioOutput === null && win.hasVideo)
             audioOutput = audioOutputComponent.createObject(win);
@@ -319,6 +347,70 @@ ApplicationWindow {
         enabled: win.hasVideo && backend.duration > 0 && !backend.busy
             && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: splitAtPlayhead()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Left"
+        context: Qt.ApplicationShortcut
+        enabled: backend.clipCount > 1 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: selectPreviousClip()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Right"
+        context: Qt.ApplicationShortcut
+        enabled: backend.clipCount > 1 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: selectNextClip()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+Left"
+        context: Qt.ApplicationShortcut
+        enabled: backend.clipCount > 1 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: moveSelectedClip(-1)
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+Right"
+        context: Qt.ApplicationShortcut
+        enabled: backend.clipCount > 1 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: moveSelectedClip(1)
+    }
+
+    Shortcut {
+        sequence: "Delete"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: removeSelectedClip()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+A"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: toggleClipAudio()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+T"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: backend.addAudioDialog()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+Shift+M"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: backend.setMuteVideoAudio(!backend.muteVideoAudio)
     }
 
     Shortcut {
@@ -876,13 +968,13 @@ ApplicationWindow {
 
         Rectangle {
             anchors.centerIn: parent
-            width: helpColumn.width + 56
-            height: helpColumn.height + 48
+            width: helpContent.width + 56
+            height: helpContent.height + 48
             radius: 12
             color: "#1c1c1e"
 
             Column {
-                id: helpColumn
+                id: helpContent
                 anchors.centerIn: parent
                 spacing: 10
 
@@ -894,38 +986,50 @@ ApplicationWindow {
                     bottomPadding: 8
                 }
 
-                Repeater {
-                    model: [
-                        { keys: "Space", action: "Play / pause" },
-                        { keys: "← / →", action: "Move playhead 1s" },
-                        { keys: "Shift ← / →", action: "Move playhead 5s" },
-                        { keys: "Alt ← / →", action: "Move playhead 0.2s" },
-                        { keys: "Ctrl Space", action: "Trim start to playhead" },
-                        { keys: "Alt Space", action: "Trim end to playhead" },
-                        { keys: "Z", action: "Zoom the selection" },
-                        { keys: "Ctrl O", action: "Open videos" },
-                        { keys: "Ctrl S", action: "Export this clip" },
-                        { keys: "Ctrl M", action: "Merge and export" },
-                        { keys: "Ctrl B", action: "Batch export all clips" },
-                        { keys: "Ctrl D", action: "Duplicate the selected clip" },
-                        { keys: "Ctrl K", action: "Cut the clip at the playhead" },
-                        { keys: "Q", action: "Quit" },
-                        { keys: "?", action: "Show these shortcuts" }
-                    ]
-                    delegate: Row {
-                        spacing: 18
-                        Label {
-                            width: 110
-                            horizontalAlignment: Text.AlignRight
-                            text: modelData.keys
-                            color: win.accent
-                            font.pixelSize: 13
-                            font.family: "monospace"
-                        }
-                        Label {
-                            text: modelData.action
-                            color: "#d6d6da"
-                            font.pixelSize: 13
+                Grid {
+                    columns: 2
+                    columnSpacing: 40
+                    rowSpacing: 8
+
+                    Repeater {
+                        model: [
+                            { keys: "Space", action: "Play / pause" },
+                            { keys: "← / →", action: "Move playhead 1s" },
+                            { keys: "Shift ← / →", action: "Move playhead 5s" },
+                            { keys: "Alt ← / →", action: "Move playhead 0.2s" },
+                            { keys: "Ctrl Space", action: "Trim start to playhead" },
+                            { keys: "Alt Space", action: "Trim end to playhead" },
+                            { keys: "Z", action: "Zoom the selection" },
+                            { keys: "Ctrl ← / →", action: "Previous / next clip" },
+                            { keys: "Ctrl Shift ← / →", action: "Move clip left / right" },
+                            { keys: "Ctrl D", action: "Duplicate the selected clip" },
+                            { keys: "Ctrl K", action: "Cut the clip at the playhead" },
+                            { keys: "Delete", action: "Remove the selected clip" },
+                            { keys: "Ctrl Shift A", action: "Attach / remove clip audio" },
+                            { keys: "Ctrl O", action: "Open videos" },
+                            { keys: "Ctrl S", action: "Export this clip" },
+                            { keys: "Ctrl M", action: "Merge and export" },
+                            { keys: "Ctrl B", action: "Batch export all clips" },
+                            { keys: "Ctrl Shift T", action: "Add merge audio track" },
+                            { keys: "Ctrl Shift M", action: "Toggle mute video audio" },
+                            { keys: "Q", action: "Quit" },
+                            { keys: "?", action: "Show these shortcuts" }
+                        ]
+                        delegate: Row {
+                            spacing: 18
+                            Label {
+                                width: 135
+                                horizontalAlignment: Text.AlignRight
+                                text: modelData.keys
+                                color: win.accent
+                                font.pixelSize: 13
+                                font.family: "monospace"
+                            }
+                            Label {
+                                text: modelData.action
+                                color: "#d6d6da"
+                                font.pixelSize: 13
+                            }
                         }
                     }
                 }
