@@ -10,6 +10,7 @@ Built with a **Qt Quick (QML)** interface on the Material style — the same Qt 
 
 - **Length trimming** — scrub a filmstrip of thumbnails, drag the start/end handles, and preview the clip before you commit to it.
 - **Merging** — add several videos to a playlist, trim each one independently, reorder or remove clips, then merge them in playlist order.
+- **Batch export** — write every clip in the playlist to its own numbered MP4 in one pass, in playlist order.
 - **Audio** — attach an audio file to any clip to replace its sound, or lay multiple audio files on a draggable track across the merged video.
 - **Frame-accurate cuts** — trims are re-encoded with `libx264`/`aac` so every cut lands exactly where you set it (no keyframe snapping).
 - **Smart export** — always MP4, always preserving aspect ratio, and never upscaling. Pick Original/1080p/720p only when the source actually benefits.
@@ -32,6 +33,17 @@ Built with a **Qt Quick (QML)** interface on the Material style — the same Qt 
 2. In the playlist on the left, click a clip to edit it, use the ↑/↓ arrows to reorder, and × to remove one.
 3. Each clip keeps its own trim (or its full length if you don't touch it).
 4. Click **Merge** (or `Ctrl+M`) to re-encode every clip and concatenate them in order.
+
+### Batch export
+
+When you've cut a podcast into a playlist of clips, **Batch export** writes each one to its own file in a single pass — no repeated Export dialogs.
+
+1. Arrange the clips in the order you want them numbered.
+2. Click **Batch** (or press `Ctrl+B`).
+3. Pick a location and a starting name, e.g. `podcast_01.mp4`. The rest follow as `podcast_02.mp4`, `podcast_03.mp4`, …
+4. If some of those files already exist, omavid asks once before replacing them.
+
+Each clip keeps its own trim and replacement audio. The merge audio track and **Mute video audio** apply only to a merge, not to a batch. If one clip fails, the rest still export and the status line reports how many succeeded.
 
 ### Audio
 
@@ -57,6 +69,7 @@ Replacement audio is applied on export; preview playback always plays the clip's
 | `Ctrl+O` | Open videos |
 | `Ctrl+S` | Export the current clip |
 | `Ctrl+M` | Merge and export the playlist |
+| `Ctrl+B` | Batch export every clip |
 | `Q` | Quit (asks first if a trim hasn't been exported) |
 | `?` | Show these shortcuts in the app |
 
@@ -127,7 +140,7 @@ The C++ backend is the bridge between QML and the ffmpeg/ffprobe command-line to
 - **`thumbprovider`** — serves the strip to QML as `image://thumbs/<revision>/<index>`.
 - **`portalfilepicker`** — talks to the XDG desktop portal over D-Bus for native open/save dialogs (multi-select on open, a Quality combo on save).
 
-Exports are written to a sibling temp file and atomically renamed into place only on success, so a failed or cancelled export never clobbers an existing file. Merges re-encode each clip (normalizing audio to 48 kHz stereo and pixel format to `yuv420p`) and then join them with a lossless concat — so mixed codecs and resolutions always come out as one clean MP4.
+Exports are written to a sibling temp file and atomically renamed into place only on success, so a failed or cancelled export never clobbers an existing file. Merges re-encode each clip (normalizing audio to 48 kHz stereo and pixel format to `yuv420p`) and then join them with a lossless concat — so mixed codecs and resolutions always come out as one clean MP4. Batch exports reuse the same frame-accurate trim path, writing one numbered file per clip and continuing past individual failures.
 
 The accent color is read from `~/.local/state/omarchy/current/theme/colors.toml` and followed live via a file watcher, with a sensible fallback so the app looks right on distros without Omarchy themes.
 

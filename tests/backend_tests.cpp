@@ -26,13 +26,17 @@ public:
     int openCount = 0;
     int exportCount = 0;
     int mergeExportCount = 0;
+    int batchExportCount = 0;
     int audioOpenCount = 0;
     QUrl lastSuggestedUrl;
     QUrl lastMergeSuggestedUrl;
+    QUrl lastBatchSuggestedUrl;
     double lastStart = 0;
     double lastEnd = 0;
+    int lastBatchClipCount = 0;
     QList<int> lastScaleHeights;
     QList<int> lastMergeScaleHeights;
+    QList<int> lastBatchScaleHeights;
 
     void openVideo() override { ++openCount; }
     void openAudio() override { ++audioOpenCount; }
@@ -51,6 +55,14 @@ public:
         ++mergeExportCount;
         lastMergeSuggestedUrl = suggestedUrl;
         lastMergeScaleHeights = scaleHeights;
+    }
+
+    void exportBatch(const QUrl &suggestedUrl, int clipCount,
+                     const QList<int> &scaleHeights) override {
+        ++batchExportCount;
+        lastBatchSuggestedUrl = suggestedUrl;
+        lastBatchClipCount = clipCount;
+        lastBatchScaleHeights = scaleHeights;
     }
 };
 
@@ -160,6 +172,9 @@ public:
     Q_INVOKABLE void removeClip(int) {}
     Q_INVOKABLE void moveClip(int, int) {}
     Q_INVOKABLE void exportMergeDialog() { ++mergeExportCount; }
+    Q_INVOKABLE void exportBatchDialog() { ++batchExportCount; }
+    Q_INVOKABLE void confirmBatchExport() {}
+    Q_INVOKABLE void cancelBatchExport() {}
     Q_INVOKABLE void attachAudioDialog(int) { ++attachCount; }
     Q_INVOKABLE void detachAudio(int) {}
     Q_INVOKABLE void setClipAudioTrim(int, double, double) {}
@@ -175,6 +190,7 @@ public:
     int openCount = 0;
     int exportCount = 0;
     int mergeExportCount = 0;
+    int batchExportCount = 0;
     int attachCount = 0;
     int addAudioCount = 0;
     double lastStart = 0;
@@ -193,6 +209,9 @@ signals:
     void currentIndexChanged();
     void exportDone(const QString &path);
     void mergeDone(const QString &path);
+    void batchDone(const QString &directory, int succeeded, int failed,
+                   const QString &firstError);
+    void batchOverwriteRequested(int count);
     void exportFailed(const QString &message);
     void loadError(const QString &message);
 
@@ -281,6 +300,10 @@ private slots:
     void concatArgsStreamCopy();
     void mergeExportHeightsUsesSmallestClip();
     void exportMergeConcatenatesClips();
+    void exportBatchDialogDelegatesToFilePicker();
+    void exportBatchWritesOneFilePerClipInOrder();
+    void exportBatchAsksBeforeOverwriting();
+    void exportBatchContinuesAfterAFailedClip();
     void qmlDoesNotCreateAudioOutputWithoutVideo();
     void qmlShortcutsTriggerBackendActions();
     void qmlArrowKeysMoveThePlayhead();
@@ -295,6 +318,7 @@ private slots:
 
 private:
     QUrl videoUrl() const { return QUrl::fromLocalFile(m_videoPath); }
+    QUrl batchVideoUrl() const { return QUrl::fromLocalFile(m_batchVideoPath); }
     QString formatName(const QString &path) const;
     void waitForBackgroundWork(Backend &backend);
     bool installBrokenFfmpeg(const QString &dirPath);
@@ -302,6 +326,7 @@ private:
     QTemporaryDir m_dir;
     QString m_videoPath;
     QString m_bigVideoPath;
+    QString m_batchVideoPath;
     QString m_audioPath;
 };
 
@@ -354,6 +379,28 @@ void BackendTests::initTestCase() {
     QCOMPARE(bigProc.exitStatus(), QProcess::NormalExit);
     QCOMPARE(bigProc.exitCode(), 0);
     QVERIFY(QFileInfo::exists(m_bigVideoPath));
+
+    // A 3-second, 10 fps clip so a batch of sub-second trims produces
+    // measurably different durations (the 1 fps fixture always reports 1s).
+    m_batchVideoPath = m_dir.filePath(QStringLiteral("batch-source.mp4"));
+    QProcess batchProc;
+    batchProc.start(ffmpeg, {
+        QStringLiteral("-hide_banner"),
+        QStringLiteral("-loglevel"),
+        QStringLiteral("error"),
+        QStringLiteral("-f"),
+        QStringLiteral("lavfi"),
+        QStringLiteral("-i"),
+        QStringLiteral("testsrc=size=64x64:rate=10:duration=3"),
+        QStringLiteral("-pix_fmt"),
+        QStringLiteral("yuv420p"),
+        QStringLiteral("-y"),
+        m_batchVideoPath,
+    });
+    QVERIFY2(batchProc.waitForFinished(10000), qPrintable(QString::fromUtf8(batchProc.readAll())));
+    QCOMPARE(batchProc.exitStatus(), QProcess::NormalExit);
+    QCOMPARE(batchProc.exitCode(), 0);
+    QVERIFY(QFileInfo::exists(m_batchVideoPath));
 
     // A 4-second tone for the audio features.
     m_audioPath = m_dir.filePath(QStringLiteral("tone.wav"));
@@ -878,6 +925,138 @@ void BackendTests::exportMergeConcatenatesClips() {
              qPrintable(formatName(outPath)));
     QVERIFY(!QFileInfo::exists(outPath + QStringLiteral(".omavid-part.mp4")));
     QVERIFY(!QFileInfo::exists(outPath + QStringLiteral(".omavid-merge")));
+}
+
+void BackendTests::exportBatchDialogDelegatesToFilePicker() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+
+    backend.exportBatchDialog();
+
+    QCOMPARE(picker->batchExportCount, 1);
+    QCOMPARE(picker->lastBatchClipCount, 2);
+    QCOMPARE(picker->lastBatchSuggestedUrl.toLocalFile(),
+             m_dir.filePath(QStringLiteral("clip_01.mp4")));
+    QCOMPARE(picker->lastBatchScaleHeights, backend.mergeExportHeights());
+}
+
+void BackendTests::exportBatchWritesOneFilePerClipInOrder() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+    QSignalSpy doneSpy(&backend, &Backend::batchDone);
+    QSignalSpy failedSpy(&backend, &Backend::exportFailed);
+
+    for (int i = 0; i < 3; ++i) {
+        QVERIFY(backend.load(batchVideoUrl()));
+        waitForBackgroundWork(backend);
+    }
+    QCOMPARE(backend.clipCount(), 3);
+
+    backend.setClipTrim(0, 0.0, 0.5);
+    backend.setClipTrim(1, 0.5, 1.0);
+    backend.setClipTrim(2, 1.0, 1.5);
+
+    const QString first = m_dir.filePath(QStringLiteral("batch_01.mp4"));
+    backend.exportBatch(QUrl::fromLocalFile(first), 0);
+
+    QVERIFY(backend.busy());
+    QTRY_VERIFY_WITH_TIMEOUT(doneSpy.count() + failedSpy.count() > 0, 30000);
+    QCOMPARE(failedSpy.count(), 0);
+    QCOMPARE(doneSpy.count(), 1);
+    QCOMPARE(doneSpy.first().at(0).toString(), m_dir.path());
+    QCOMPARE(doneSpy.first().at(1).toInt(), 3);
+    QCOMPARE(doneSpy.first().at(2).toInt(), 0);
+    QCOMPARE(doneSpy.first().at(3).toString(), QString());
+    QVERIFY(!backend.busy());
+    QVERIFY(backend.status().isEmpty());
+
+    for (const QString &name : {QStringLiteral("batch_01.mp4"),
+                                QStringLiteral("batch_02.mp4"),
+                                QStringLiteral("batch_03.mp4")}) {
+        const QString path = m_dir.filePath(name);
+        QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+        QVERIFY2(QFileInfo(path).size() > 0, qPrintable(path));
+        const ffmpeg::VideoInfo info = ffmpeg::probe(path);
+        QVERIFY2(info.ok, qPrintable(info.error));
+        QVERIFY2(info.duration > 0.3 && info.duration < 0.8,
+                 qPrintable(QStringLiteral("%1 duration %2").arg(name).arg(info.duration)));
+    }
+}
+
+void BackendTests::exportBatchAsksBeforeOverwriting() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+    QSignalSpy doneSpy(&backend, &Backend::batchDone);
+    QSignalSpy askSpy(&backend, &Backend::batchOverwriteRequested);
+
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+
+    const QString first = m_dir.filePath(QStringLiteral("overwrite_01.mp4"));
+    const QString second = m_dir.filePath(QStringLiteral("overwrite_02.mp4"));
+    QFile stale(second);
+    QVERIFY(stale.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    QCOMPARE(stale.write("stale"), qint64(5));
+    stale.close();
+
+    backend.exportBatch(QUrl::fromLocalFile(first), 0);
+
+    QTRY_COMPARE_WITH_TIMEOUT(askSpy.count(), 1, 5000);
+    QCOMPARE(askSpy.first().at(0).toInt(), 1);
+    QVERIFY(!backend.busy());
+    QVERIFY(!QFileInfo::exists(first));
+
+    backend.confirmBatchExport();
+    QVERIFY(backend.busy());
+    QTRY_VERIFY_WITH_TIMEOUT(doneSpy.count() > 0, 30000);
+    QCOMPARE(doneSpy.first().at(1).toInt(), 2);
+    QCOMPARE(doneSpy.first().at(2).toInt(), 0);
+    QVERIFY(QFileInfo::exists(first));
+
+    const ffmpeg::VideoInfo replaced = ffmpeg::probe(second);
+    QVERIFY2(replaced.ok, qPrintable(replaced.error));
+    QVERIFY(QFileInfo(second).size() > 5);
+}
+
+void BackendTests::exportBatchContinuesAfterAFailedClip() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+    QSignalSpy doneSpy(&backend, &Backend::batchDone);
+    QSignalSpy failedSpy(&backend, &Backend::exportFailed);
+
+    for (int i = 0; i < 3; ++i) {
+        QVERIFY(backend.load(videoUrl()));
+        waitForBackgroundWork(backend);
+    }
+
+    backend.setClipTrim(0, 0.0, 0.3);
+    backend.setClipTrim(1, 0.5, 0.5);
+    backend.setClipTrim(2, 0.6, 1.0);
+
+    backend.exportBatch(QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("partial_01.mp4"))), 0);
+
+    QTRY_VERIFY_WITH_TIMEOUT(doneSpy.count() + failedSpy.count() > 0, 30000);
+    QCOMPARE(failedSpy.count(), 0);
+    QCOMPARE(doneSpy.count(), 1);
+    QCOMPARE(doneSpy.first().at(1).toInt(), 2);
+    QCOMPARE(doneSpy.first().at(2).toInt(), 1);
+    QVERIFY(!doneSpy.first().at(3).toString().isEmpty());
+    QVERIFY(!backend.busy());
+
+    QVERIFY(QFileInfo::exists(m_dir.filePath(QStringLiteral("partial_01.mp4"))));
+    QVERIFY(!QFileInfo::exists(m_dir.filePath(QStringLiteral("partial_02.mp4"))));
+    QVERIFY(QFileInfo::exists(m_dir.filePath(QStringLiteral("partial_03.mp4"))));
 }
 
 void BackendTests::exportClipWritesMp4() {

@@ -21,6 +21,8 @@ ApplicationWindow {
     property string noticeText: ""
     property bool helpVisible: false
     property bool quitConfirmVisible: false
+    property bool batchConfirmVisible: false
+    property int batchOverwriteCount: 0
     readonly property string statusText: noticeText !== "" ? noticeText : backend.status
 
     // Tracks unexported work across the whole playlist: a trim or a reorder
@@ -74,6 +76,11 @@ ApplicationWindow {
         if (backend.clipCount < 2 || backend.busy)
             return;
         backend.exportMergeDialog();
+    }
+    function exportBatchVideo() {
+        if (backend.clipCount < 1 || backend.busy)
+            return;
+        backend.exportBatchDialog();
     }
     function ensureAudioOutput() {
         if (audioOutput === null && win.hasVideo)
@@ -168,6 +175,10 @@ ApplicationWindow {
     onClosing: (close) => {
         if (win.quitting)
             return;
+        if (win.batchConfirmVisible) {
+            backend.cancelBatchExport();
+            win.batchConfirmVisible = false;
+        }
         if (win.trimDirty) {
             close.accepted = false;
             if (player.playbackState === MediaPlayer.PlayingState)
@@ -184,63 +195,63 @@ ApplicationWindow {
     Shortcut {
         sequence: "Space"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: togglePlay()
     }
 
     Shortcut {
         sequence: "Ctrl+Space"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: moveTrimStartTo(trimBar.playheadSec)
     }
 
     Shortcut {
         sequence: "Alt+Space"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: moveTrimEndTo(trimBar.playheadSec)
     }
 
     Shortcut {
         sequence: "Left"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: seekBy(-1)
     }
 
     Shortcut {
         sequence: "Right"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: seekBy(1)
     }
 
     Shortcut {
         sequence: "Shift+Left"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: seekBy(-5)
     }
 
     Shortcut {
         sequence: "Shift+Right"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: seekBy(5)
     }
 
     Shortcut {
         sequence: "Alt+Left"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: seekBy(-0.2)
     }
 
     Shortcut {
         sequence: "Alt+Right"
         context: Qt.ApplicationShortcut
-        enabled: win.hasVideo && !win.quitConfirmVisible
+        enabled: win.hasVideo && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: seekBy(0.2)
     }
 
@@ -248,6 +259,7 @@ ApplicationWindow {
         sequence: "Z"
         context: Qt.ApplicationShortcut
         enabled: win.hasVideo && backend.duration > 0 && !win.quitConfirmVisible
+            && !win.batchConfirmVisible
         onActivated: {
             trimBar.toggleZoom();
             backend.requestThumbs(trimBar.windowStart, trimBar.windowEnd);
@@ -258,6 +270,7 @@ ApplicationWindow {
         sequence: "Ctrl+S"
         context: Qt.ApplicationShortcut
         enabled: win.hasVideo && backend.duration > 0 && !backend.busy
+            && !win.batchConfirmVisible
         onActivated: {
             win.quitConfirmVisible = false;
             exportVideo();
@@ -267,14 +280,23 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+M"
         context: Qt.ApplicationShortcut
-        enabled: backend.clipCount >= 2 && !backend.busy && !win.quitConfirmVisible
+        enabled: backend.clipCount >= 2 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: exportMergeVideo()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+B"
+        context: Qt.ApplicationShortcut
+        enabled: backend.clipCount >= 1 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: exportBatchVideo()
     }
 
     Shortcut {
         sequence: "Ctrl+O"
         context: Qt.ApplicationShortcut
-        enabled: !win.quitConfirmVisible
+        enabled: !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: openVideo()
     }
 
@@ -282,7 +304,7 @@ ApplicationWindow {
         sequence: "Q"
         context: Qt.ApplicationShortcut
         onActivated: {
-            if (!win.quitConfirmVisible)
+            if (!win.quitConfirmVisible && !win.batchConfirmVisible)
                 requestQuit();
         }
     }
@@ -291,7 +313,7 @@ ApplicationWindow {
         sequence: "?"
         context: Qt.ApplicationShortcut
         onActivated: {
-            if (!win.quitConfirmVisible)
+            if (!win.quitConfirmVisible && !win.batchConfirmVisible)
                 win.helpVisible = !win.helpVisible;
         }
     }
@@ -300,10 +322,14 @@ ApplicationWindow {
         sequence: "Escape"
         context: Qt.ApplicationShortcut
         onActivated: {
-            if (win.quitConfirmVisible)
+            if (win.batchConfirmVisible) {
+                backend.cancelBatchExport();
+                win.batchConfirmVisible = false;
+            } else if (win.quitConfirmVisible) {
                 win.quitConfirmVisible = false;
-            else if (win.helpVisible)
+            } else if (win.helpVisible) {
                 win.helpVisible = false;
+            }
         }
     }
 
@@ -645,6 +671,12 @@ ApplicationWindow {
                     }
                     Button {
                         Layout.fillWidth: true
+                        text: "Batch"
+                        enabled: backend.clipCount >= 1 && !backend.busy
+                        onClicked: exportBatchVideo()
+                    }
+                    Button {
+                        Layout.fillWidth: true
                         text: "Merge"
                         highlighted: true
                         Material.foreground: win.accentForeground
@@ -924,6 +956,7 @@ ApplicationWindow {
                         { keys: "Ctrl O", action: "Open videos" },
                         { keys: "Ctrl S", action: "Export this clip" },
                         { keys: "Ctrl M", action: "Merge and export" },
+                        { keys: "Ctrl B", action: "Batch export all clips" },
                         { keys: "Q", action: "Quit" },
                         { keys: "?", action: "Show these shortcuts" }
                     ]
@@ -1033,6 +1066,90 @@ ApplicationWindow {
         }
     }
 
+    // --- batch overwrite confirmation ---
+    Rectangle {
+        visible: win.batchConfirmVisible
+        anchors.fill: parent
+        color: "#000000cc"
+        onVisibleChanged: {
+            if (visible)
+                batchReplaceButton.forceActiveFocus();
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                backend.cancelBatchExport();
+                win.batchConfirmVisible = false;
+            }
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: batchColumn.width + 64
+            height: batchColumn.height + 48
+            radius: 12
+            color: "#1c1c1e"
+
+            MouseArea {
+                anchors.fill: parent
+            }
+
+            Column {
+                id: batchColumn
+                anchors.centerIn: parent
+                spacing: 8
+
+                Label {
+                    text: "Files already exist"
+                    color: "white"
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                }
+
+                Label {
+                    text: win.batchOverwriteCount + " output file"
+                        + (win.batchOverwriteCount === 1 ? "" : "s")
+                        + " already exist. Replace them?"
+                    color: "#d6d6da"
+                    font.pixelSize: 13
+                    bottomPadding: 12
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    spacing: 10
+
+                    DialogButton {
+                        id: batchCancelButton
+                        text: "Cancel"
+                        KeyNavigation.left: batchReplaceButton
+                        KeyNavigation.right: batchReplaceButton
+                        KeyNavigation.tab: batchReplaceButton
+                        KeyNavigation.backtab: batchReplaceButton
+                        onClicked: {
+                            backend.cancelBatchExport();
+                            win.batchConfirmVisible = false;
+                        }
+                    }
+                    DialogButton {
+                        id: batchReplaceButton
+                        text: "Replace"
+                        primary: true
+                        KeyNavigation.left: batchCancelButton
+                        KeyNavigation.right: batchCancelButton
+                        KeyNavigation.tab: batchCancelButton
+                        KeyNavigation.backtab: batchCancelButton
+                        onClicked: {
+                            win.batchConfirmVisible = false;
+                            backend.confirmBatchExport();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Connections {
         target: trimBar
         function onStartSecChanged() { win.pushTrim(); }
@@ -1072,6 +1189,22 @@ ApplicationWindow {
         function onMergeDone(path) {
             win.showNotice("Saved " + path);
             win.lastExportedClipRevision = backend.clipRevision;
+        }
+        function onBatchDone(directory, succeeded, failed, firstError) {
+            if (failed === 0) {
+                win.showNotice("Saved " + succeeded + " clips to " + directory);
+                win.lastExportedClipRevision = backend.clipRevision;
+            } else {
+                var msg = "Exported " + succeeded + " of " + (succeeded + failed)
+                    + " clips. " + failed + " failed";
+                if (firstError !== "")
+                    msg += ": " + firstError;
+                win.showNotice(msg);
+            }
+        }
+        function onBatchOverwriteRequested(count) {
+            win.batchOverwriteCount = count;
+            win.batchConfirmVisible = true;
         }
         function onExportFailed(message) {
             win.showNotice("Export failed: " + message);

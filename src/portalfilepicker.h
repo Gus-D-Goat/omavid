@@ -16,6 +16,8 @@ public:
                      const QList<int> &scaleHeights) override;
     void exportMerged(const QUrl &suggestedUrl,
                       const QList<int> &scaleHeights) override;
+    void exportBatch(const QUrl &suggestedUrl, int clipCount,
+                     const QList<int> &scaleHeights) override;
 
 private slots:
     void handleResponse(uint response, const QVariantMap &results);
@@ -26,7 +28,8 @@ private:
         Open,
         OpenAudio,
         Export,
-        ExportMerged
+        ExportMerged,
+        ExportBatch
     };
 
     bool requestFile(const QString &method, const QString &title,

@@ -266,6 +266,24 @@ void PortalFilePicker::exportMerged(const QUrl &suggestedUrl,
                 options, Action::ExportMerged);
 }
 
+void PortalFilePicker::exportBatch(const QUrl &suggestedUrl, int clipCount,
+                                   const QList<int> &scaleHeights) {
+    const QFileInfo target(suggestedUrl.toLocalFile());
+
+    QVariantMap options;
+    options.insert(QStringLiteral("accept_label"), QStringLiteral("Export"));
+    options.insert(QStringLiteral("modal"), true);
+    options.insert(QStringLiteral("current_folder"), portalPathBytes(target.absolutePath()));
+    options.insert(QStringLiteral("current_name"), target.fileName());
+    options.insert(QStringLiteral("filters"), QVariant::fromValue(mp4Filters()));
+    options.insert(QStringLiteral("current_filter"), QVariant::fromValue(mp4Filter()));
+    addQualityChoices(options, scaleHeights);
+
+    requestFile(QStringLiteral("SaveFile"),
+                QStringLiteral("Export %1 Clips").arg(clipCount),
+                options, Action::ExportBatch);
+}
+
 bool PortalFilePicker::connectToRequestPath(const QString &path) {
     m_pendingPath = path;
     return QDBusConnection::sessionBus().connect(
@@ -366,7 +384,8 @@ void PortalFilePicker::handleResponse(uint response, const QVariantMap &results)
         emit audioSelected(QUrl(uris.first()));
         return;
     }
-    if (action != Action::Export && action != Action::ExportMerged)
+    if (action != Action::Export && action != Action::ExportMerged
+            && action != Action::ExportBatch)
         return;
 
     const QUrl url(uris.first());
@@ -392,6 +411,10 @@ void PortalFilePicker::handleResponse(uint response, const QVariantMap &results)
 
     if (action == Action::ExportMerged) {
         emit exportMergedSelected(url, scaleHeight);
+        return;
+    }
+    if (action == Action::ExportBatch) {
+        emit exportBatchSelected(url, scaleHeight);
         return;
     }
     emit exportSelected(url, start, end, scaleHeight);

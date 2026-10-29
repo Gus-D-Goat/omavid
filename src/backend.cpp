@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTextStream>
 
 #include <cstdio>
@@ -50,6 +51,39 @@ QString concatFileLine(const QString &path) {
     escaped.replace(QLatin1Char('\''), QLatin1String("'\\''"));
     return QStringLiteral("file '%1'\n").arg(escaped);
 }
+
+// "<name>_01.mp4", "<name>_02.mp4", … in the chosen file's folder. A trailing
+// number in the chosen name continues that sequence, so picking podcast_07.mp4
+// starts at 07 instead of silently rewriting it to 01.
+QStringList batchOutputPaths(const QString &selectedPath, int count) {
+    const QFileInfo selected(selectedPath);
+    const QString base = selected.completeBaseName();
+    if (base.isEmpty())
+        return {};
+
+    QString prefix = base + QLatin1Char('_');
+    int start = 1;
+    int width = 2;
+
+    static const QRegularExpression numbered(QStringLiteral("^(.*[_-])(\\d+)$"));
+    const QRegularExpressionMatch match = numbered.match(base);
+    if (match.hasMatch()) {
+        prefix = match.captured(1);
+        start = match.captured(2).toInt();
+        width = qMax(2, match.captured(2).size());
+    }
+
+    const int last = start + count - 1;
+    width = qMax(width, QString::number(last).size());
+
+    QStringList paths;
+    paths.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        const QString number = QString::number(start + i).rightJustified(width, QLatin1Char('0'));
+        paths << selected.dir().filePath(prefix + number + QStringLiteral(".mp4"));
+    }
+    return paths;
+}
 }
 
 // State for a merge run: the per-clip encode jobs, one concat pass, then an
@@ -67,6 +101,21 @@ struct Backend::MergeContext {
     bool muteVideoAudio = false;
     double totalDuration = 0.0;
     int next = 0;
+    std::shared_ptr<bool> completed = std::make_shared<bool>(false);
+};
+
+// State for a batch export: one independent encode per clip, each written to
+// its own numbered file. A failed clip is skipped rather than ending the run.
+struct Backend::BatchContext {
+    QString ffmpegBin;
+    QString outDir;
+    QStringList outPaths;
+    QList<QStringList> argLists;
+    QList<double> lengths;
+    int next = 0;
+    int succeeded = 0;
+    int failed = 0;
+    QString firstError;
     std::shared_ptr<bool> completed = std::make_shared<bool>(false);
 };
 
@@ -103,6 +152,7 @@ void Backend::wireFilePicker() {
     connect(m_filePicker, &FilePicker::openSelected, this, &Backend::addClips);
     connect(m_filePicker, &FilePicker::exportSelected, this, &Backend::exportClip);
     connect(m_filePicker, &FilePicker::exportMergedSelected, this, &Backend::exportMerge);
+    connect(m_filePicker, &FilePicker::exportBatchSelected, this, &Backend::exportBatch);
     connect(m_filePicker, &FilePicker::audioSelected, this, &Backend::handleAudioSelected);
     connect(m_filePicker, &FilePicker::failed, this, &Backend::loadError);
 }
@@ -512,6 +562,13 @@ void Backend::exportMergeDialog() {
     m_filePicker->exportMerged(suggestedMergeUrl(), mergeExportHeights());
 }
 
+void Backend::exportBatchDialog() {
+    if (m_clips->count() == 0 || m_busy || m_pendingBatch)
+        return;
+
+    m_filePicker->exportBatch(suggestedBatchUrl(), m_clips->count(), mergeExportHeights());
+}
+
 QList<int> Backend::exportHeights(int width, int height) {
     const int shortSide = qMin(width, height);
     QList<int> heights;
@@ -549,6 +606,14 @@ QUrl Backend::suggestedMergeUrl() const {
         return {};
     const QFileInfo src(m_clips->at(0).path);
     const QString target = src.dir().filePath(src.completeBaseName() + "_merged.mp4");
+    return QUrl::fromLocalFile(target);
+}
+
+QUrl Backend::suggestedBatchUrl() const {
+    if (m_clips->count() == 0)
+        return {};
+    const QFileInfo src(m_clips->at(0).path);
+    const QString target = src.dir().filePath(src.completeBaseName() + "_01.mp4");
     return QUrl::fromLocalFile(target);
 }
 
@@ -967,4 +1032,160 @@ void Backend::cleanupMergeTemp(const std::shared_ptr<MergeContext> &ctx) {
     QFile::remove(ctx->tmpPath);
     QFile::remove(ctx->mixPath);
     QDir(ctx->tmpDir).removeRecursively();
+}
+
+void Backend::exportBatch(const QUrl &dst, int scaleHeight) {
+    if (m_clips->count() == 0 || m_busy || m_pendingBatch)
+        return;
+
+    const QStringList outPaths = batchOutputPaths(dst.toLocalFile(), m_clips->count());
+    if (outPaths.size() != m_clips->count()) {
+        emit exportFailed(QStringLiteral("Could not build the batch output names."));
+        return;
+    }
+
+    const QString ffmpegBin = ffmpeg::toolPath("ffmpeg");
+    if (ffmpegBin.isEmpty()) {
+        emit exportFailed("`ffmpeg` was not found on your PATH.");
+        return;
+    }
+
+    auto ctx = std::make_shared<BatchContext>();
+    ctx->ffmpegBin = ffmpegBin;
+    ctx->outDir = QFileInfo(outPaths.first()).absolutePath();
+    ctx->outPaths = outPaths;
+
+    for (int i = 0; i < m_clips->count(); ++i) {
+        const Clip &clip = m_clips->at(i);
+        const QString tmpPath = outPaths.at(i) + QStringLiteral(".omavid-part.mp4");
+        ctx->argLists << ffmpeg::trimArgs(clip.path, tmpPath, clip.startSec, clip.endSec,
+                                          scaleHeight, audioSpecFor(clip));
+        ctx->lengths << (clip.endSec - clip.startSec);
+    }
+
+    int existing = 0;
+    for (const QString &path : outPaths) {
+        if (QFileInfo::exists(path))
+            ++existing;
+    }
+    if (existing > 0) {
+        m_pendingBatch = ctx;
+        emit batchOverwriteRequested(existing);
+        return;
+    }
+
+    startBatchExport(ctx);
+}
+
+void Backend::confirmBatchExport() {
+    if (!m_pendingBatch)
+        return;
+    const auto ctx = m_pendingBatch;
+    m_pendingBatch.reset();
+    startBatchExport(ctx);
+}
+
+void Backend::cancelBatchExport() {
+    m_pendingBatch.reset();
+}
+
+void Backend::startBatchExport(const std::shared_ptr<BatchContext> &ctx) {
+    setBusy(true);
+    setStatus(QStringLiteral("Exporting 1 of %1 — 0%").arg(ctx->argLists.size()));
+    runNextBatchClip(ctx);
+}
+
+void Backend::runNextBatchClip(const std::shared_ptr<BatchContext> &ctx) {
+    if (*ctx->completed)
+        return;
+    if (ctx->next >= ctx->argLists.size()) {
+        finishBatch(ctx);
+        return;
+    }
+
+    const int i = ctx->next++;
+    const int total = ctx->argLists.size();
+    const double clipLen = ctx->lengths.at(i);
+    if (clipLen <= 0.0) {
+        ++ctx->failed;
+        if (ctx->firstError.isEmpty())
+            ctx->firstError = QStringLiteral("A clip has no length.");
+        runNextBatchClip(ctx);
+        return;
+    }
+
+    setStatus(QStringLiteral("Exporting %1 of %2 — 0%").arg(i + 1).arg(total));
+
+    const QString outPath = ctx->outPaths.at(i);
+    const QString tmpPath = outPath + QStringLiteral(".omavid-part.mp4");
+    QFile::remove(tmpPath);
+
+    auto *proc = new QProcess(this);
+    auto handled = std::make_shared<bool>(false);
+    auto progressBuf = std::make_shared<QByteArray>();
+
+    connect(proc, &QProcess::readyReadStandardOutput, this,
+            [this, proc, progressBuf, clipLen, i, total, handled] {
+                progressBuf->append(proc->readAllStandardOutput());
+                int newline;
+                while ((newline = progressBuf->indexOf('\n')) >= 0) {
+                    const QByteArray line = progressBuf->left(newline).trimmed();
+                    progressBuf->remove(0, newline + 1);
+                    if (*handled || !line.startsWith("out_time_us="))
+                        continue;
+                    bool ok = false;
+                    const double outSecs = line.mid(line.indexOf('=') + 1).toLongLong(&ok) / 1e6;
+                    if (!ok)
+                        continue;
+                    const int percent = qBound(0, qRound(outSecs / clipLen * 100.0), 100);
+                    setStatus(QStringLiteral("Exporting %1 of %2 — %3%")
+                                  .arg(i + 1).arg(total).arg(percent));
+                }
+            });
+
+    const auto recordFailure = [ctx, tmpPath](const QString &message) {
+        ++ctx->failed;
+        if (ctx->firstError.isEmpty())
+            ctx->firstError = message;
+        QFile::remove(tmpPath);
+    };
+
+    connect(proc, &QProcess::finished, this,
+            [this, ctx, proc, outPath, tmpPath, handled, recordFailure](
+                int code, QProcess::ExitStatus exitStatus) {
+                if (*handled) {
+                    proc->deleteLater();
+                    return;
+                }
+                *handled = true;
+                const QString err = QString::fromUtf8(proc->readAllStandardError()).trimmed();
+                proc->deleteLater();
+                if (exitStatus != QProcess::NormalExit || code != 0) {
+                    recordFailure(err.isEmpty() ? QStringLiteral("ffmpeg trim failed.") : err);
+                } else if (!replaceWithTemp(tmpPath, outPath)) {
+                    recordFailure(QStringLiteral("Could not write the exported file."));
+                } else {
+                    ++ctx->succeeded;
+                }
+                runNextBatchClip(ctx);
+            });
+    connect(proc, &QProcess::errorOccurred, this,
+            [this, ctx, proc, handled, recordFailure](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart || *handled)
+                    return;
+                *handled = true;
+                const QString err = proc->errorString();
+                proc->deleteLater();
+                recordFailure(err.isEmpty() ? QStringLiteral("Could not start ffmpeg.") : err);
+                runNextBatchClip(ctx);
+            });
+
+    proc->start(ctx->ffmpegBin, ctx->argLists.at(i));
+}
+
+void Backend::finishBatch(const std::shared_ptr<BatchContext> &ctx) {
+    *ctx->completed = true;
+    setBusy(false);
+    setStatus(QString());
+    emit batchDone(ctx->outDir, ctx->succeeded, ctx->failed, ctx->firstError);
 }

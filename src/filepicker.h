@@ -19,6 +19,9 @@ public:
                              const QList<int> &scaleHeights) = 0;
     virtual void exportMerged(const QUrl &suggestedUrl,
                               const QList<int> &scaleHeights) = 0;
+    // One Save dialog for a whole batch; clipCount is only used in the title.
+    virtual void exportBatch(const QUrl &suggestedUrl, int clipCount,
+                             const QList<int> &scaleHeights) = 0;
 
 signals:
     void openSelected(const QList<QUrl> &urls);
@@ -26,5 +29,6 @@ signals:
     // scaleHeight is 0 for "Original", otherwise the chosen short-side size.
     void exportSelected(const QUrl &url, double start, double end, int scaleHeight);
     void exportMergedSelected(const QUrl &url, int scaleHeight);
+    void exportBatchSelected(const QUrl &url, int scaleHeight);
     void failed(const QString &message);
 };

@@ -119,11 +119,14 @@ public:
     Q_INVOKABLE void openVideoDialog();
     Q_INVOKABLE void exportDialog(double start, double end);
     Q_INVOKABLE void exportMergeDialog();
+    Q_INVOKABLE void exportBatchDialog();
 
     // Suggested "<name>_trimmed.mp4" target next to the current source.
     Q_INVOKABLE QUrl suggestedExportUrl() const;
     // Suggested "<first-clip>_merged.mp4" target next to the first clip.
     Q_INVOKABLE QUrl suggestedMergeUrl() const;
+    // Suggested "<first-clip>_01.mp4" starting point for a batch.
+    Q_INVOKABLE QUrl suggestedBatchUrl() const;
 
     // Write [start, end] (seconds) of the current clip to dst. A non-zero
     // scaleHeight downscales the shorter side to that size.
@@ -133,6 +136,12 @@ public:
     // Re-encode every clip (with its own trim) and concatenate them into dst,
     // then mix the audio track over it.
     Q_INVOKABLE void exportMerge(const QUrl &dst, int scaleHeight = 0);
+
+    // Write every clip to its own numbered file next to dst. Existing files are
+    // replaced only after confirmBatchExport().
+    Q_INVOKABLE void exportBatch(const QUrl &dst, int scaleHeight = 0);
+    Q_INVOKABLE void confirmBatchExport();
+    Q_INVOKABLE void cancelBatchExport();
 
     // The downscale heights worth offering for a source: only ones strictly
     // below the source's shorter side, so exports never upscale.
@@ -154,11 +163,15 @@ signals:
     void currentIndexChanged();
     void exportDone(const QString &path);
     void mergeDone(const QString &path);
+    void batchDone(const QString &directory, int succeeded, int failed,
+                   const QString &firstError);
+    void batchOverwriteRequested(int count);
     void exportFailed(const QString &message);
     void loadError(const QString &message);
 
 private:
     struct MergeContext;
+    struct BatchContext;
 
     void setBusy(bool busy);
     void setStatus(const QString &status);
@@ -187,6 +200,10 @@ private:
     void failMerge(const std::shared_ptr<MergeContext> &ctx, const QString &message);
     static void cleanupMergeTemp(const std::shared_ptr<MergeContext> &ctx);
 
+    void startBatchExport(const std::shared_ptr<BatchContext> &ctx);
+    void runNextBatchClip(const std::shared_ptr<BatchContext> &ctx);
+    void finishBatch(const std::shared_ptr<BatchContext> &ctx);
+
     ThumbProvider *m_provider;
     FilePicker *m_filePicker;
     ClipListModel *m_clips;
@@ -195,6 +212,7 @@ private:
     int m_clipRevision = 0;
     int m_pendingAudioClipIndex = -1;
     bool m_muteVideoAudio = false;
+    std::shared_ptr<BatchContext> m_pendingBatch;
     ThumbWorker *m_thumbWorker = nullptr;
     double m_thumbStart = 0.0;
     double m_thumbLen = 0.0;
