@@ -82,6 +82,18 @@ ApplicationWindow {
             return;
         backend.exportBatchDialog();
     }
+    function canSplit() {
+        if (!win.hasVideo || backend.duration <= 0 || backend.busy)
+            return false;
+        var gap = Math.min(0.1, backend.duration);
+        return trimBar.playheadSec > trimBar.startSec + gap
+            && trimBar.playheadSec < trimBar.endSec - gap;
+    }
+    function splitAtPlayhead() {
+        if (!canSplit())
+            return;
+        backend.splitClip(backend.currentIndex, trimBar.playheadSec);
+    }
     function ensureAudioOutput() {
         if (audioOutput === null && win.hasVideo)
             audioOutput = audioOutputComponent.createObject(win);
@@ -299,6 +311,14 @@ ApplicationWindow {
         enabled: win.hasVideo && !backend.busy
             && !win.quitConfirmVisible && !win.batchConfirmVisible
         onActivated: backend.duplicateClip(backend.currentIndex)
+    }
+
+    Shortcut {
+        sequence: "Ctrl+K"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo && backend.duration > 0 && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: splitAtPlayhead()
     }
 
     Shortcut {
@@ -523,6 +543,17 @@ ApplicationWindow {
         }
     }
 
+    // A compact text button for the trim controls.
+    component TrimButton: Button {
+        font.pixelSize: 11
+        implicitHeight: 32
+        leftPadding: 10
+        rightPadding: 10
+        topPadding: 4
+        bottomPadding: 4
+        ToolTip.visible: hovered
+    }
+
     // A tiny icon-less button for per-clip reorder/remove/audio actions.
     component RowButton: Rectangle {
         id: rowButton
@@ -631,6 +662,20 @@ ApplicationWindow {
                         onClicked: togglePlay()
                     }
 
+                    TrimButton {
+                        text: "Set start"
+                        enabled: backend.duration > 0 && !backend.busy
+                        ToolTip.text: "Set trim start to the playhead (Ctrl+Space)"
+                        onClicked: moveTrimStartTo(trimBar.playheadSec)
+                    }
+
+                    TrimButton {
+                        text: "Set end"
+                        enabled: backend.duration > 0 && !backend.busy
+                        ToolTip.text: "Set trim end to the playhead (Alt+Space)"
+                        onClicked: moveTrimEndTo(trimBar.playheadSec)
+                    }
+
                     TrimBar {
                         id: trimBar
                         objectName: "trimBar"
@@ -641,6 +686,13 @@ ApplicationWindow {
                         thumbReadyCount: backend.thumbReadyCount
                         thumbRevision: backend.thumbRevision
                         onScrub: (seconds) => player.position = Math.round(seconds * 1000)
+                    }
+
+                    TrimButton {
+                        text: "Cut"
+                        enabled: canSplit()
+                        ToolTip.text: "Split the clip at the playhead (Ctrl+K)"
+                        onClicked: splitAtPlayhead()
                     }
 
                     IconButton {
@@ -664,6 +716,7 @@ ApplicationWindow {
                     clipCount: backend.clipCount
                     currentIndex: backend.currentIndex
                     currentClipHasAudio: backend.clipHasAudio
+                    canCut: win.canSplit()
                     busy: backend.busy
                     accent: win.accent
                     accentForeground: win.accentForeground
@@ -675,6 +728,7 @@ ApplicationWindow {
                     onAttachAudioRequested: (index) => backend.attachAudioDialog(index)
                     onDetachAudioRequested: (index) => backend.detachAudio(index)
                     onDuplicateRequested: (index) => backend.duplicateClip(index)
+                    onCutRequested: splitAtPlayhead()
                     onRemoveRequested: (index) => backend.removeClip(index)
                 }
 
@@ -854,6 +908,7 @@ ApplicationWindow {
                         { keys: "Ctrl M", action: "Merge and export" },
                         { keys: "Ctrl B", action: "Batch export all clips" },
                         { keys: "Ctrl D", action: "Duplicate the selected clip" },
+                        { keys: "Ctrl K", action: "Cut the clip at the playhead" },
                         { keys: "Q", action: "Quit" },
                         { keys: "?", action: "Show these shortcuts" }
                     ]

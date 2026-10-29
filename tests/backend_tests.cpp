@@ -172,6 +172,7 @@ public:
     Q_INVOKABLE void removeClip(int) {}
     Q_INVOKABLE void moveClip(int, int) {}
     Q_INVOKABLE void duplicateClip(int) { ++duplicateCount; }
+    Q_INVOKABLE void splitClip(int, double) { ++splitCount; }
     Q_INVOKABLE void exportMergeDialog() { ++mergeExportCount; }
     Q_INVOKABLE void exportBatchDialog() { ++batchExportCount; }
     Q_INVOKABLE void confirmBatchExport() {}
@@ -193,6 +194,7 @@ public:
     int mergeExportCount = 0;
     int batchExportCount = 0;
     int duplicateCount = 0;
+    int splitCount = 0;
     int attachCount = 0;
     int addAudioCount = 0;
     double lastStart = 0;
@@ -281,6 +283,7 @@ private slots:
     void pickerMultiSelectionAddsClips();
     void selectRemoveReorderClips();
     void duplicateClipCopiesTrimAndAudio();
+    void splitClipCutsAtPlayhead();
     void setClipTrimMarksDirty();
     void attachAudioReplacesAndDetaches();
     void setClipAudioTrimClampsToAudioDuration();
@@ -312,6 +315,7 @@ private slots:
     void exportBatchContinuesAfterAFailedClip();
     void qmlDoesNotCreateAudioOutputWithoutVideo();
     void qmlTimelineShowsEveryClip();
+    void qmlCutShortcutSplitsAtPlayhead();
     void qmlShortcutsTriggerBackendActions();
     void qmlArrowKeysMoveThePlayhead();
     void qmlSpaceChordsSetTheTrimEdges();
@@ -571,6 +575,34 @@ void BackendTests::duplicateClipCopiesTrimAndAudio() {
     QCOMPARE(backend.clips()->at(1).endSec, 0.8);
     QCOMPARE(backend.clips()->at(0).startSec, 0.1);
     QCOMPARE(backend.clips()->at(0).endSec, 0.8);
+    QVERIFY(backend.anyClipTrimmed());
+}
+
+void BackendTests::splitClipCutsAtPlayhead() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+
+    QVERIFY(backend.load(batchVideoUrl()));
+    waitForBackgroundWork(backend);
+    backend.setClipTrim(0, 0.5, 2.5);
+    backend.attachAudioDialog(0);
+    emit picker->audioSelected(QUrl::fromLocalFile(m_audioPath));
+
+    backend.splitClip(0, 1.5);
+
+    QCOMPARE(backend.clipCount(), 2);
+    QCOMPARE(backend.currentIndex(), 1);
+    QCOMPARE(backend.clips()->at(0).startSec, 0.5);
+    QCOMPARE(backend.clips()->at(0).endSec, 1.5);
+    QCOMPARE(backend.clips()->at(1).startSec, 1.5);
+    QCOMPARE(backend.clips()->at(1).endSec, 2.5);
+    QVERIFY(backend.clips()->at(0).hasAudio());
+    QVERIFY(backend.clips()->at(1).hasAudio());
+    QCOMPARE(backend.clips()->at(0).audioStartSec, 0.0);
+    QCOMPARE(backend.clips()->at(0).audioEndSec, 1.0);
+    QCOMPARE(backend.clips()->at(1).audioStartSec, 1.0);
+    QCOMPARE(backend.clips()->at(1).audioEndSec, 4.0);
     QVERIFY(backend.anyClipTrimmed());
 }
 
@@ -1313,6 +1345,31 @@ void BackendTests::qmlTimelineShowsEveryClip() {
     QQuickItem *list = window->findChild<QQuickItem *>(QStringLiteral("sequenceList"));
     QVERIFY(list);
     QTRY_COMPARE_WITH_TIMEOUT(list->property("count").toInt(), 2, 3000);
+}
+
+void BackendTests::qmlCutShortcutSplitsAtPlayhead() {
+    ShortcutBackend backend(QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("shortcut-placeholder.mp4"))),
+                            20.0);
+    QmlHarness harness(backend);
+
+    QVERIFY2(harness.window(), qPrintable(mainQmlPath()));
+    QQuickWindow *window = harness.window();
+    QTRY_VERIFY_WITH_TIMEOUT(window->property("audioOutputReady").toBool(), 3000);
+
+    backend.announceInfo();
+    QQuickItem *trimBar = harness.trimBar();
+    QVERIFY(trimBar);
+    QCOMPARE(trimBar->property("endSec").toDouble(), 20.0);
+
+    window->show();
+    window->requestActivate();
+    QTest::qWait(100);
+
+    QTest::keyClick(window, Qt::Key_Right);
+    QTRY_COMPARE_WITH_TIMEOUT(trimBar->property("playheadSec").toDouble(), 1.0, 3000);
+
+    QTest::keyClick(window, Qt::Key_K, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.splitCount, 1, 3000);
 }
 
 void BackendTests::qmlShortcutsTriggerBackendActions() {

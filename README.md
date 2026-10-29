@@ -24,7 +24,7 @@ Built with a **Qt Quick (QML)** interface on the Material style — the same Qt 
 ### Trimming
 
 1. Open a video (`Ctrl+O` or click the preview).
-2. Drag the two handles on the filmstrip to set the start and end.
+2. Drag the two handles on the filmstrip to set the start and end, or move the playhead and click **Set start** / **Set end**.
 3. Scrub with the playhead; press `Space` to play just the selection.
 4. Export with `Ctrl+S` (or the download button).
 
@@ -35,6 +35,7 @@ Every clip appears as a block on the timeline at the bottom, in order. Click a b
 - **← / →** move the selected clip one slot.
 - **Attach audio** adds replacement sound to that clip; **Remove audio** restores its own sound.
 - **Duplicate** copies the clip's source and trim, so you can cut another segment from the same podcast without reopening the file (`Ctrl+D`).
+- **Cut** splits the selected clip in two at the playhead (`Ctrl+K`). Both halves keep the source and replacement audio, and the right-hand half is selected.
 - **Remove** deletes the clip.
 
 Batch export and Merge both use the timeline order.
@@ -83,6 +84,7 @@ Replacement audio is applied on export; preview playback always plays the clip's
 | `Ctrl+M` | Merge and export the playlist |
 | `Ctrl+B` | Batch export every clip |
 | `Ctrl+D` | Duplicate the selected clip |
+| `Ctrl+K` | Cut the selected clip at the playhead |
 | `Q` | Quit (asks first if a trim hasn't been exported) |
 | `?` | Show these shortcuts in the app |
 

@@ -103,6 +103,8 @@ public:
     Q_INVOKABLE void moveClip(int from, int to);
     // Copy a clip (source, trim and replacement audio) in right after itself.
     Q_INVOKABLE void duplicateClip(int index);
+    // Split a clip at atSec into two adjacent clips, adjusting replacement audio.
+    Q_INVOKABLE void splitClip(int index, double atSec);
     Q_INVOKABLE void setClipTrim(int index, double start, double end);
 
     // Replacement audio: attach to a clip (mutes its own audio) or detach.

@@ -451,6 +451,50 @@ void Backend::duplicateClip(int index) {
     selectClip(row);
 }
 
+void Backend::splitClip(int index, double atSec) {
+    if (index < 0 || index >= m_clips->count() || m_busy)
+        return;
+
+    const Clip &clip = m_clips->at(index);
+    const double minGap = qMin(0.1, clip.duration);
+    if (!clip.ok || atSec <= clip.startSec + minGap || atSec >= clip.endSec - minGap)
+        return;
+
+    Clip second = clip;
+    second.startSec = atSec;
+
+    if (clip.hasAudio()) {
+        const double offset = atSec - clip.startSec;
+        const double audioEnd = clip.audioEndSec;
+        const double audioSplit = qBound(clip.audioStartSec,
+                                         clip.audioStartSec + offset,
+                                         audioEnd);
+        m_clips->setAudio(index, clip.audioPath, clip.audioName, clip.audioDuration,
+                          clip.audioStartSec, audioSplit);
+        if (audioSplit < audioEnd) {
+            second.audioStartSec = audioSplit;
+            second.audioEndSec = audioEnd;
+        } else {
+            // The replacement audio ended before the cut; the right-hand piece
+            // has no replacement sound left to play.
+            second.audioPath.clear();
+            second.audioName.clear();
+            second.audioDuration = 0.0;
+            second.audioStartSec = 0.0;
+            second.audioEndSec = 0.0;
+        }
+    }
+
+    m_clips->setTrim(index, clip.startSec, atSec);
+    const int row = m_clips->insert(index + 1, second);
+    if (row < 0)
+        return;
+
+    bumpClipRevision();
+    m_currentIndex = -1;
+    selectClip(row);
+}
+
 void Backend::setClipTrim(int index, double start, double end) {
     if (index < 0 || index >= m_clips->count())
         return;

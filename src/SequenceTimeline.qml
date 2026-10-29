@@ -14,6 +14,7 @@ Item {
     property int clipCount: 0
     property int currentIndex: -1
     property bool currentClipHasAudio: false
+    property bool canCut: false
     property bool busy: false
     property color accent: "#FFD60A"
     property color accentForeground: "black"
@@ -30,6 +31,7 @@ Item {
     signal attachAudioRequested(int index)
     signal detachAudioRequested(int index)
     signal duplicateRequested(int index)
+    signal cutRequested()
     signal removeRequested(int index)
 
     component SmallButton: Button {
@@ -119,6 +121,11 @@ Item {
                 text: "Duplicate"
                 enabled: !root.busy
                 onClicked: root.duplicateRequested(root.currentIndex)
+            }
+            SmallButton {
+                text: "Cut"
+                enabled: root.canCut && !root.busy
+                onClicked: root.cutRequested()
             }
             SmallButton {
                 text: "Remove"
