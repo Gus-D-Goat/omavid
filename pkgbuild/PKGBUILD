@@ -1,11 +1,11 @@
 # Maintainer: David Heinemeier Hansson <david@hey.com>
 
 pkgname=omavid
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='Dead-simple video trimmer and merger built with Qt Quick and ffmpeg'
 arch=('x86_64')
-url='https://github.com/GustavoDGoat/omavid'
+url='https://github.com/Gus-D-Goat/omavid'
 license=('MIT')
 install='omavid.install'
 depends=('ffmpeg' 'qt6-base' 'qt6-declarative' 'qt6-multimedia' 'xdg-desktop-portal')
