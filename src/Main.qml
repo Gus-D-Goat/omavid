@@ -294,6 +294,14 @@ ApplicationWindow {
     }
 
     Shortcut {
+        sequence: "Ctrl+D"
+        context: Qt.ApplicationShortcut
+        enabled: win.hasVideo && !backend.busy
+            && !win.quitConfirmVisible && !win.batchConfirmVisible
+        onActivated: backend.duplicateClip(backend.currentIndex)
+    }
+
+    Shortcut {
         sequence: "Ctrl+O"
         context: Qt.ApplicationShortcut
         enabled: !win.quitConfirmVisible && !win.batchConfirmVisible
@@ -550,143 +558,6 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
 
-        // --- playlist sidebar ---
-        Rectangle {
-            id: sidebar
-            visible: backend.clipCount > 0
-            Layout.preferredWidth: 250
-            Layout.fillHeight: true
-            color: "#141416"
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 12
-                spacing: 10
-
-                Label {
-                    text: "Videos (" + backend.clipCount + ")"
-                    color: "#d6d6da"
-                    font.pixelSize: 13
-                    font.weight: Font.DemiBold
-                }
-
-                ListView {
-                    id: clipList
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    model: backend.clips
-                    clip: true
-                    spacing: 6
-
-                    delegate: Rectangle {
-                        id: clipRow
-                        width: ListView.view.width
-                        height: 56
-                        radius: 8
-                        color: index === backend.currentIndex ? "#2c2c2f" : "transparent"
-                        border.color: index === backend.currentIndex ? win.accent : "transparent"
-                        border.width: index === backend.currentIndex ? 1 : 0
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: backend.selectClip(index)
-                        }
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 6
-
-                            ColumnLayout {
-                                Layout.fillWidth: true
-                                spacing: 2
-
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: model.name
-                                    color: "white"
-                                    elide: Text.ElideRight
-                                    font.pixelSize: 12
-                                }
-                                Label {
-                                    Layout.fillWidth: true
-                                    text: model.trimmed
-                                        ? Format.fmt(model.startSec) + " – " + Format.fmt(model.endSec)
-                                        : Format.fmt(model.duration)
-                                    color: model.trimmed ? win.accent : "#9a9aa0"
-                                    elide: Text.ElideRight
-                                    font.pixelSize: 10
-                                    font.family: "monospace"
-                                }
-                                Label {
-                                    Layout.fillWidth: true
-                                    visible: model.hasAudio
-                                    text: "♪ " + model.audioName
-                                    color: win.accent
-                                    elide: Text.ElideRight
-                                    font.pixelSize: 10
-                                }
-                            }
-
-                            Row {
-                                spacing: 2
-                                RowButton {
-                                    glyph: "↑"
-                                    tip: "Move up"
-                                    enabled: index > 0
-                                    onClicked: backend.moveClip(index, index - 1)
-                                }
-                                RowButton {
-                                    glyph: "↓"
-                                    tip: "Move down"
-                                    enabled: index < backend.clipCount - 1
-                                    onClicked: backend.moveClip(index, index + 1)
-                                }
-                                RowButton {
-                                    glyph: "♪"
-                                    tip: model.hasAudio ? "Remove audio" : "Attach audio"
-                                    glyphColor: model.hasAudio ? win.accent : "#c0c0c4"
-                                    onClicked: model.hasAudio ? backend.detachAudio(index) : backend.attachAudioDialog(index)
-                                }
-                                RowButton {
-                                    glyph: "×"
-                                    tip: "Remove clip"
-                                    onClicked: backend.removeClip(index)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    Button {
-                        Layout.fillWidth: true
-                        text: "Add videos"
-                        onClicked: openVideo()
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: "Batch"
-                        enabled: backend.clipCount >= 1 && !backend.busy
-                        onClicked: exportBatchVideo()
-                    }
-                    Button {
-                        Layout.fillWidth: true
-                        text: "Merge"
-                        highlighted: true
-                        Material.foreground: win.accentForeground
-                        enabled: backend.clipCount >= 2 && !backend.busy
-                        onClicked: exportMergeVideo()
-                    }
-                }
-            }
-        }
-
         // --- main area ---
         Item {
             Layout.fillWidth: true
@@ -780,6 +651,31 @@ ApplicationWindow {
                         enabled: backend.duration > 0 && !backend.busy
                         onClicked: exportVideo()
                     }
+                }
+
+                // --- clip sequence ---
+                SequenceTimeline {
+                    id: sequence
+                    objectName: "sequenceTimeline"
+                    visible: backend.clipCount > 0
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 168
+                    model: backend.clips
+                    clipCount: backend.clipCount
+                    currentIndex: backend.currentIndex
+                    currentClipHasAudio: backend.clipHasAudio
+                    busy: backend.busy
+                    accent: win.accent
+                    accentForeground: win.accentForeground
+                    onClipSelected: (index) => backend.selectClip(index)
+                    onClipMoved: (from, to) => backend.moveClip(from, to)
+                    onAddRequested: openVideo()
+                    onBatchRequested: exportBatchVideo()
+                    onMergeRequested: exportMergeVideo()
+                    onAttachAudioRequested: (index) => backend.attachAudioDialog(index)
+                    onDetachAudioRequested: (index) => backend.detachAudio(index)
+                    onDuplicateRequested: (index) => backend.duplicateClip(index)
+                    onRemoveRequested: (index) => backend.removeClip(index)
                 }
 
                 // --- audio ---
@@ -957,6 +853,7 @@ ApplicationWindow {
                         { keys: "Ctrl S", action: "Export this clip" },
                         { keys: "Ctrl M", action: "Merge and export" },
                         { keys: "Ctrl B", action: "Batch export all clips" },
+                        { keys: "Ctrl D", action: "Duplicate the selected clip" },
                         { keys: "Q", action: "Quit" },
                         { keys: "?", action: "Show these shortcuts" }
                     ]

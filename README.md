@@ -9,8 +9,9 @@ Built with a **Qt Quick (QML)** interface on the Material style — the same Qt 
 ## Features
 
 - **Length trimming** — scrub a filmstrip of thumbnails, drag the start/end handles, and preview the clip before you commit to it.
-- **Merging** — add several videos to a playlist, trim each one independently, reorder or remove clips, then merge them in playlist order.
-- **Batch export** — write every clip in the playlist to its own numbered MP4 in one pass, in playlist order.
+- **Timeline** — every clip sits in a horizontal sequence at the bottom; click to select, drag to reorder, and duplicate a clip to cut another segment from the same source.
+- **Merging** — add several videos, trim each one independently, reorder or remove clips, then merge them in timeline order.
+- **Batch export** — write every clip in the timeline to its own numbered MP4 in one pass, in timeline order.
 - **Audio** — attach an audio file to any clip to replace its sound, or lay multiple audio files on a draggable track across the merged video.
 - **Frame-accurate cuts** — trims are re-encoded with `libx264`/`aac` so every cut lands exactly where you set it (no keyframe snapping).
 - **Smart export** — always MP4, always preserving aspect ratio, and never upscaling. Pick Original/1080p/720p only when the source actually benefits.
@@ -27,19 +28,30 @@ Built with a **Qt Quick (QML)** interface on the Material style — the same Qt 
 3. Scrub with the playhead; press `Space` to play just the selection.
 4. Export with `Ctrl+S` (or the download button).
 
+### Timeline
+
+Every clip appears as a block on the timeline at the bottom, in order. Click a block to edit it, drag it left or right to reorder it, or use the action row for the selected clip:
+
+- **← / →** move the selected clip one slot.
+- **Attach audio** adds replacement sound to that clip; **Remove audio** restores its own sound.
+- **Duplicate** copies the clip's source and trim, so you can cut another segment from the same podcast without reopening the file (`Ctrl+D`).
+- **Remove** deletes the clip.
+
+Batch export and Merge both use the timeline order.
+
 ### Merging
 
 1. Open several videos at once (`Ctrl+O`; the file picker allows multiple selection).
-2. In the playlist on the left, click a clip to edit it, use the ↑/↓ arrows to reorder, and × to remove one.
+2. Trim each clip on the timeline; click a block to select it, drag it to reorder, or use the ←/→ buttons.
 3. Each clip keeps its own trim (or its full length if you don't touch it).
 4. Click **Merge** (or `Ctrl+M`) to re-encode every clip and concatenate them in order.
 
 ### Batch export
 
-When you've cut a podcast into a playlist of clips, **Batch export** writes each one to its own file in a single pass — no repeated Export dialogs.
+When you've cut a podcast into a timeline of clips, **Batch export** writes each one to its own file in a single pass — no repeated Export dialogs.
 
 1. Arrange the clips in the order you want them numbered.
-2. Click **Batch** (or press `Ctrl+B`).
+2. Click **Batch export** (or press `Ctrl+B`).
 3. Pick a location and a starting name, e.g. `podcast_01.mp4`. The rest follow as `podcast_02.mp4`, `podcast_03.mp4`, …
 4. If some of those files already exist, omavid asks once before replacing them.
 
@@ -49,7 +61,7 @@ Each clip keeps its own trim and replacement audio. The merge audio track and **
 
 Two ways to bring your own sound:
 
-**Clip audio (replace a clip's sound).** Hit the ♪ button on any clip in the playlist and pick an audio file. The clip's original audio is muted and the imported file plays instead — drag the handles in the "Clip audio" bar under the timeline to cut it. The ♪ button removes the audio and restores the original sound.
+**Clip audio (replace a clip's sound).** Select a clip on the timeline, click **Attach audio**, and pick an audio file. The clip's original audio is muted and the imported file plays instead — drag the handles in the "Clip audio" bar to cut it. **Remove audio** in the action row restores the original sound.
 
 **Audio track (sound for the merged video).** Use **Add audio** in the "Audio track" section to import as many audio files as you like. Each one appears as a block on a track that spans the whole merged video: drag a block to move it anywhere on the timeline, drag its edges to trim it, and × to remove it. **Mute video audio** silences the clips' own sound so only your imported audio plays. Everything is mixed on export — sources with different sample rates or channel counts are normalized automatically, and videos without any audio still mix cleanly.
 
@@ -70,6 +82,7 @@ Replacement audio is applied on export; preview playback always plays the clip's
 | `Ctrl+S` | Export the current clip |
 | `Ctrl+M` | Merge and export the playlist |
 | `Ctrl+B` | Batch export every clip |
+| `Ctrl+D` | Duplicate the selected clip |
 | `Q` | Quit (asks first if a trim hasn't been exported) |
 | `?` | Show these shortcuts in the app |
 
@@ -87,7 +100,7 @@ This installs the binary, desktop entry, app icon, and MIT license.
 
 ### AppImage
 
-A self-contained x86_64 AppImage (with `ffmpeg`/`ffprobe` bundled) is built on every push and attached to each tagged release. Download the latest from the [Releases](https://github.com/GustavoDGoat/omavid/releases) page, make it executable, and run it — no install required:
+A self-contained x86_64 AppImage (with `ffmpeg`/`ffprobe` bundled) is built on every push and attached to each tagged release. Download the latest from the [Releases](https://github.com/Gus-D-Goat/omavid/releases) page, make it executable, and run it — no install required:
 
 ```bash
 chmod +x omavid-x86_64.AppImage
@@ -134,7 +147,8 @@ Runs the QtTest suite (backend logic, ffmpeg argument construction, the QML shor
 
 The C++ backend is the bridge between QML and the ffmpeg/ffprobe command-line tools:
 
-- **`backend`** — owns the clip playlist and the current selection, probes videos, and drives thumbnail generation, single-clip export, and the merge.
+- **`backend`** — owns the clip sequence (the timeline) and the current selection, probes videos, and drives thumbnail generation, single-clip export, batch export, and the merge.
+- **`SequenceTimeline`** — the QML timeline of clip blocks: selection, drag-reordering, duplication, and the batch/merge actions.
 - **`ffmpeg`** — thin wrappers around `ffprobe` (probing), `ffmpeg` (frame thumbnails, trim/merge argument lists).
 - **`thumbworker`** — a `QThread` that renders the 12-frame filmstrip off the UI thread, with up to four parallel ffmpeg jobs and prompt cancellation.
 - **`thumbprovider`** — serves the strip to QML as `image://thumbs/<revision>/<index>`.

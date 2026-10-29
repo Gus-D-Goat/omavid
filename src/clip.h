@@ -73,6 +73,8 @@ public:
 
     // Returns the row of the inserted clip.
     int append(const Clip &clip);
+    // Inserts at `row` (0..count) and returns the row, or -1 if out of range.
+    int insert(int row, const Clip &clip);
     void removeAt(int index);
     void move(int from, int to);
     // Updates a clip's trim in place; returns true if the value changed.

@@ -323,6 +323,7 @@ bool Backend::anyClipTrimmed() const {
 void Backend::bumpClipRevision() {
     ++m_clipRevision;
     emit clipsChanged();
+    emit clipAudioChanged();
 }
 
 bool Backend::load(const QUrl &url) {
@@ -392,6 +393,7 @@ void Backend::selectClip(int index) {
     }
 
     emit currentIndexChanged();
+    emit clipAudioChanged();
     emit infoChanged();
 }
 
@@ -406,6 +408,7 @@ void Backend::removeClip(int index) {
         m_currentIndex = -1;
         clearFilmstrip();
         emit currentIndexChanged();
+        emit clipAudioChanged();
         emit infoChanged();
     } else if (removedCurrent) {
         m_currentIndex = -1;  // force re-selection through selectClip
@@ -431,6 +434,21 @@ void Backend::moveClip(int from, int to) {
         emit currentIndexChanged();
     }
     bumpClipRevision();
+}
+
+void Backend::duplicateClip(int index) {
+    if (index < 0 || index >= m_clips->count() || m_busy)
+        return;
+
+    const int row = m_clips->insert(index + 1, m_clips->at(index));
+    if (row < 0)
+        return;
+
+    bumpClipRevision();
+    // Force selectClip to reload even when the copy lands on the old current
+    // index (e.g. duplicating clip 1 while clip 2 is selected).
+    m_currentIndex = -1;
+    selectClip(row);
 }
 
 void Backend::setClipTrim(int index, double start, double end) {

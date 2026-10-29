@@ -171,6 +171,7 @@ public:
     Q_INVOKABLE void selectClip(int) {}
     Q_INVOKABLE void removeClip(int) {}
     Q_INVOKABLE void moveClip(int, int) {}
+    Q_INVOKABLE void duplicateClip(int) { ++duplicateCount; }
     Q_INVOKABLE void exportMergeDialog() { ++mergeExportCount; }
     Q_INVOKABLE void exportBatchDialog() { ++batchExportCount; }
     Q_INVOKABLE void confirmBatchExport() {}
@@ -191,6 +192,7 @@ public:
     int exportCount = 0;
     int mergeExportCount = 0;
     int batchExportCount = 0;
+    int duplicateCount = 0;
     int attachCount = 0;
     int addAudioCount = 0;
     double lastStart = 0;
@@ -247,9 +249,12 @@ static QString mainQmlPath() {
 // as the window is in use, so each shortcut test is just the key presses.
 class QmlHarness {
 public:
-    explicit QmlHarness(ShortcutBackend &backend) {
-        m_engine.addImageProvider(QStringLiteral("thumbs"), new ThumbProvider);
-        m_engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+    explicit QmlHarness(ShortcutBackend &backend) : QmlHarness(static_cast<QObject *>(&backend)) {}
+
+    explicit QmlHarness(QObject *backend, ThumbProvider *provider = nullptr) {
+        m_engine.addImageProvider(QStringLiteral("thumbs"),
+                                  provider ? provider : new ThumbProvider);
+        m_engine.rootContext()->setContextProperty(QStringLiteral("backend"), backend);
         m_engine.load(QUrl::fromLocalFile(mainQmlPath()));
         if (!m_engine.rootObjects().isEmpty())
             m_window = qobject_cast<QQuickWindow *>(m_engine.rootObjects().first());
@@ -275,6 +280,7 @@ private slots:
     void pickerSelectionLoadsVideo();
     void pickerMultiSelectionAddsClips();
     void selectRemoveReorderClips();
+    void duplicateClipCopiesTrimAndAudio();
     void setClipTrimMarksDirty();
     void attachAudioReplacesAndDetaches();
     void setClipAudioTrimClampsToAudioDuration();
@@ -305,6 +311,7 @@ private slots:
     void exportBatchAsksBeforeOverwriting();
     void exportBatchContinuesAfterAFailedClip();
     void qmlDoesNotCreateAudioOutputWithoutVideo();
+    void qmlTimelineShowsEveryClip();
     void qmlShortcutsTriggerBackendActions();
     void qmlArrowKeysMoveThePlayhead();
     void qmlSpaceChordsSetTheTrimEdges();
@@ -534,6 +541,37 @@ void BackendTests::selectRemoveReorderClips() {
     backend.removeClip(0);
     QCOMPARE(backend.clipCount(), 1);
     QCOMPARE(backend.currentIndex(), 0);
+}
+
+void BackendTests::duplicateClipCopiesTrimAndAudio() {
+    ThumbProvider provider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(&provider, picker);
+
+    QVERIFY(backend.load(videoUrl()));
+    waitForBackgroundWork(backend);
+
+    backend.setClipTrim(0, 0.1, 0.8);
+    backend.attachAudioDialog(0);
+    emit picker->audioSelected(QUrl::fromLocalFile(m_audioPath));
+    QVERIFY(backend.clipHasAudio());
+
+    const int revision = backend.clipRevision();
+    backend.duplicateClip(0);
+
+    QCOMPARE(backend.clipCount(), 2);
+    QCOMPARE(backend.currentIndex(), 1);
+    QVERIFY(backend.clipRevision() > revision);
+    QCOMPARE(backend.clipStartSec(), 0.1);
+    QCOMPARE(backend.clipEndSec(), 0.8);
+    QVERIFY(backend.clipHasAudio());
+    QCOMPARE(backend.clipAudioName(), QStringLiteral("tone.wav"));
+    QCOMPARE(backend.clips()->at(1).path, backend.clips()->at(0).path);
+    QCOMPARE(backend.clips()->at(1).startSec, 0.1);
+    QCOMPARE(backend.clips()->at(1).endSec, 0.8);
+    QCOMPARE(backend.clips()->at(0).startSec, 0.1);
+    QCOMPARE(backend.clips()->at(0).endSec, 0.8);
+    QVERIFY(backend.anyClipTrimmed());
 }
 
 void BackendTests::setClipTrimMarksDirty() {
@@ -1248,6 +1286,35 @@ void BackendTests::qmlDoesNotCreateAudioOutputWithoutVideo() {
     QCOMPARE(harness.window()->property("audioOutputReady").toBool(), false);
 }
 
+void BackendTests::qmlTimelineShowsEveryClip() {
+    // The engine owns the provider, and the backend outlives the engine, so the
+    // backend's destructor never touches it.
+    auto *provider = new ThumbProvider;
+    auto *picker = new FakeFilePicker;
+    Backend backend(provider, picker);
+
+    QVERIFY(backend.load(batchVideoUrl()));
+    waitForBackgroundWork(backend);
+    QVERIFY(backend.load(batchVideoUrl()));
+    waitForBackgroundWork(backend);
+    QCOMPARE(backend.clipCount(), 2);
+
+    QmlHarness harness(&backend, provider);
+    QVERIFY2(harness.window(), qPrintable(mainQmlPath()));
+    QQuickWindow *window = harness.window();
+    window->show();
+    window->requestActivate();
+    QTest::qWait(500);
+
+    QQuickItem *timeline = window->findChild<QQuickItem *>(QStringLiteral("sequenceTimeline"));
+    QVERIFY(timeline);
+    QVERIFY(timeline->isVisible());
+
+    QQuickItem *list = window->findChild<QQuickItem *>(QStringLiteral("sequenceList"));
+    QVERIFY(list);
+    QTRY_COMPARE_WITH_TIMEOUT(list->property("count").toInt(), 2, 3000);
+}
+
 void BackendTests::qmlShortcutsTriggerBackendActions() {
     ShortcutBackend backend(QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("shortcut-placeholder.mp4"))),
                             1.0);
@@ -1266,6 +1333,12 @@ void BackendTests::qmlShortcutsTriggerBackendActions() {
 
     QTest::keyClick(window, Qt::Key_O, Qt::ControlModifier);
     QTRY_COMPARE_WITH_TIMEOUT(backend.openCount, 1, 3000);
+
+    QTest::keyClick(window, Qt::Key_B, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.batchExportCount, 1, 3000);
+
+    QTest::keyClick(window, Qt::Key_D, Qt::ControlModifier);
+    QTRY_COMPARE_WITH_TIMEOUT(backend.duplicateCount, 1, 3000);
 
     // ? toggles the hotkey overlay, and Escape closes it again.
     QTest::keyClick(window, Qt::Key_Question);

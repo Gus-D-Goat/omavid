@@ -70,6 +70,15 @@ int ClipListModel::append(const Clip &clip) {
     return row;
 }
 
+int ClipListModel::insert(int row, const Clip &clip) {
+    if (row < 0 || row > m_clips.size())
+        return -1;
+    beginInsertRows(QModelIndex(), row, row);
+    m_clips.insert(row, clip);
+    endInsertRows();
+    return row;
+}
+
 void ClipListModel::removeAt(int index) {
     if (index < 0 || index >= m_clips.size())
         return;

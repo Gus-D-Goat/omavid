@@ -39,11 +39,11 @@ class Backend : public QObject {
     Q_PROPERTY(int currentIndex READ currentIndex NOTIFY currentIndexChanged)
     Q_PROPERTY(double clipStartSec READ clipStartSec NOTIFY currentIndexChanged)
     Q_PROPERTY(double clipEndSec READ clipEndSec NOTIFY currentIndexChanged)
-    Q_PROPERTY(bool clipHasAudio READ clipHasAudio NOTIFY currentIndexChanged)
-    Q_PROPERTY(double clipAudioStart READ clipAudioStart NOTIFY currentIndexChanged)
-    Q_PROPERTY(double clipAudioEnd READ clipAudioEnd NOTIFY currentIndexChanged)
-    Q_PROPERTY(double clipAudioDuration READ clipAudioDuration NOTIFY currentIndexChanged)
-    Q_PROPERTY(QString clipAudioName READ clipAudioName NOTIFY currentIndexChanged)
+    Q_PROPERTY(bool clipHasAudio READ clipHasAudio NOTIFY clipAudioChanged)
+    Q_PROPERTY(double clipAudioStart READ clipAudioStart NOTIFY clipAudioChanged)
+    Q_PROPERTY(double clipAudioEnd READ clipAudioEnd NOTIFY clipAudioChanged)
+    Q_PROPERTY(double clipAudioDuration READ clipAudioDuration NOTIFY clipAudioChanged)
+    Q_PROPERTY(QString clipAudioName READ clipAudioName NOTIFY clipAudioChanged)
     Q_PROPERTY(AudioTrackModel *audioTrack READ audioTrack CONSTANT)
     Q_PROPERTY(int audioTrackCount READ audioTrackCount NOTIFY clipsChanged)
     Q_PROPERTY(bool muteVideoAudio READ muteVideoAudio NOTIFY clipsChanged)
@@ -101,6 +101,8 @@ public:
     Q_INVOKABLE void selectClip(int index);
     Q_INVOKABLE void removeClip(int index);
     Q_INVOKABLE void moveClip(int from, int to);
+    // Copy a clip (source, trim and replacement audio) in right after itself.
+    Q_INVOKABLE void duplicateClip(int index);
     Q_INVOKABLE void setClipTrim(int index, double start, double end);
 
     // Replacement audio: attach to a clip (mutes its own audio) or detach.
@@ -161,6 +163,7 @@ signals:
     void themeAccentChanged();
     void clipsChanged();
     void currentIndexChanged();
+    void clipAudioChanged();
     void exportDone(const QString &path);
     void mergeDone(const QString &path);
     void batchDone(const QString &directory, int succeeded, int failed,
